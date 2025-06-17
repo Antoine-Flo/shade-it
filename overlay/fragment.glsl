@@ -4,44 +4,75 @@ in vec2 uv;
 out vec4 fragColor;
 uniform float time;
 
+
+
+float rand(vec2 n) {
+    return fract(sin(cos(dot(n, vec2(12.9898,12.1414)))) * 83758.5453);
+}
+
+float noise(vec2 n) {
+    const vec2 d = vec2(0.0, 1.0);
+    vec2 b = floor(n), f = smoothstep(vec2(0.0), vec2(1.0), fract(n));
+    return mix(mix(rand(b), rand(b + d.yx), f.x), mix(rand(b + d.xy), rand(b + d.yy), f.x), f.y);
+}
+
+float fbm(vec2 n) {
+    float total = 0.0, amplitude = 1.0;
+    for (int i = 0; i < 5; i++) {
+        total += noise(n) * amplitude;
+        n += n*1.7;
+        amplitude *= 0.47;
+    }
+    return total;
+}
+
 void main() {
-    // Create dramatic animated effects
-    vec2 center = vec2(0.5, 0.5);
-    vec2 pos = uv - center;
-    float dist = length(pos);
+    // Adapted from Shadertoy - mapping variables to our setup
+    vec2 iResolution = vec2(1.0, 1.0);  // Normalized resolution
+    float iTime = time;
+    vec2 fragCoord = uv;
+
+    const vec3 c1 = vec3(0.5, 0.0, 0.1);
+    const vec3 c2 = vec3(0.9, 0.1, 0.0);
+    const vec3 c3 = vec3(0.2, 0.1, 0.7);
+    const vec3 c4 = vec3(1.0, 0.9, 0.1);
+    const vec3 c5 = vec3(0.1);
+    const vec3 c6 = vec3(0.9);
+
+    vec2 speed = vec2(0.1, 0.9);
+    float shift = 1.327+sin(iTime*2.0)/2.4;
     
-    // Multiple wave patterns
-    float wave1 = sin(dist * 20.0 - time * 8.0) * 0.5 + 0.5;
-    float wave2 = cos(dist * 15.0 + time * 6.0) * 0.5 + 0.5;
-    float wave3 = sin(uv.x * 10.0 + time * 4.0) * cos(uv.y * 10.0 + time * 3.0);
+    float dist = 3.5-sin(iTime*0.4)/1.89;
     
-    // Color cycling with dramatic intensity
-    float colorCycle = time * 2.0;
-    vec3 color1 = vec3(1.0, 0.2, 0.8); // Hot pink
-    vec3 color2 = vec3(0.2, 0.8, 1.0); // Cyan
-    vec3 color3 = vec3(1.0, 0.8, 0.2); // Gold
+    vec2 uvCoord = fragCoord.xy / iResolution.xy;
+    vec2 p = fragCoord.xy * dist / iResolution.xx;
+    p += sin(p.yx*4.0+vec2(.2,-.3)*iTime)*0.04;
+    p += sin(p.yx*8.0+vec2(.6,+.1)*iTime)*0.01;
     
-    // Interpolate between colors based on waves
-    vec3 baseColor = mix(color1, color2, wave1);
-    baseColor = mix(baseColor, color3, wave2);
+    p.x -= iTime/1.1;
+    float q = fbm(p - iTime * 0.3+1.0*sin(iTime+0.5)/2.0);
+    float qb = fbm(p - iTime * 0.4+0.1*cos(iTime)/2.0);
+    float q2 = fbm(p - iTime * 0.44 - 5.0*cos(iTime)/2.0) - 6.0;
+    float q3 = fbm(p - iTime * 0.9 - 10.0*cos(iTime)/15.0)-4.0;
+    float q4 = fbm(p - iTime * 1.4 - 20.0*sin(iTime)/14.0)+2.0;
+    q = (q + qb - .4 * q2 -2.0*q3  + .6*q4)/3.8;
+    vec2 r = vec2(fbm(p + q /2.0 + iTime * speed.x - p.x - p.y), fbm(p + q - iTime * speed.y));
+    vec3 c = mix(c1, c2, fbm(p + r)) + mix(c3, c4, r.x) - mix(c5, c6, r.y);
+    vec3 color = vec3(1.0/(pow(c+1.61,vec3(4.0))) * cos(shift * fragCoord.y / iResolution.y));
     
-    // Dramatic pulsing intensity
-    float pulse = 0.4 + 0.6 * sin(time * 3.0);
-    float intensity = pulse * (0.8 + 0.4 * wave3);
+    color=vec3(1.0,.2,.05)/(pow((r.y+r.y)* max(.0,p.y)+0.1, 4.0));
     
-    // Add radial gradient for more drama
-    float radialGradient = 1.0 - smoothstep(0.0, 0.8, dist);
-    intensity *= (0.5 + 0.5 * radialGradient);
+    // Replaced texture sampling with procedural noise since we don't have iChannel0
+    vec3 textureApprox = vec3(noise(uvCoord*0.6+vec2(.5,.1))) * 0.01 * pow((r.y+r.y)*.65,5.0) + 0.055;
+    color += textureApprox * mix(vec3(.9,.4,.3), vec3(.7,.5,.2), uvCoord.y);
     
-    // Combine all effects
-    vec3 finalColor = baseColor * intensity;
+    color = color/(1.0+max(vec3(0),color));
     
-    // Add some edge effects
-    float edge = smoothstep(0.0, 0.1, uv.x) * smoothstep(0.0, 0.1, uv.y) * 
-                 smoothstep(0.0, 0.1, 1.0 - uv.x) * smoothstep(0.0, 0.1, 1.0 - uv.y);
+    // Calculate alpha based on color brightness - darker areas become transparent
+    float luminance = dot(color, vec3(0.299, 0.587, 0.114)); // Standard luminance calculation
+    float alpha = smoothstep(0.0, 0.1, luminance); // Adjust 0.3 to control transparency threshold
+    alpha = pow(alpha, 0.8) * 1.2; // Enhance contrast and brightness
+    alpha = clamp(alpha, 0.0, 1.0); // Ensure valid alpha range
     
-    // Higher alpha for more dramatic visibility
-    float alpha = 0.7 * intensity * edge;
-    
-    fragColor = vec4(finalColor, alpha);
+    fragColor = vec4(color.x, color.y, color.z, alpha);
 }
