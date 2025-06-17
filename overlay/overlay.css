@@ -1,0 +1,19 @@
+#shade-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 9999;
+    /* Prevent any layout shifts or flickering */
+    display: block;
+    /* Ensure the canvas doesn't interfere with page flow */
+    margin: 0;
+    padding: 0;
+    border: none;
+    /* Improve rendering performance */
+    will-change: transform;
+    /* Prevent canvas from being affected by CSS transforms */
+    transform-origin: 0 0;
+}

@@ -1,0 +1,37 @@
+{
+  "name": "Shade it",
+  "description": "Base Level Extension",
+  "version": "1.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": "logo.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "css": [
+        "overlay/overlay.css"
+      ],
+      "js": [
+        "overlay/overlay.js"
+      ]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "overlay/*.glsl"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}
