@@ -1,16 +1,21 @@
 {
   "name": "Shade it",
-  "description": "Base Level Extension",
+  "description": "Apply shaders to your browser",
   "version": "1.0",
   "manifest_version": 3,
   "action": {
+    "default_title": "Shade it",
     "default_popup": "popup/index.html",
-    "default_icon": "logo.png"
+    "default_icon": "assets/icons/logo.png"
   },
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage"
   ],
+  "background": {
+    "service_worker": "stateManager.js"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -20,7 +25,8 @@
         "overlay/overlay.css"
       ],
       "js": [
-        "overlay/overlay.js"
+        "overlay/overlay.js",
+        "overlay/shader.js"
       ]
     }
   ],
