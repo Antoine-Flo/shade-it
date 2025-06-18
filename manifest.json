@@ -25,7 +25,6 @@
         "overlay/overlay.css"
       ],
       "js": [
-        "overlay/overlay.js",
         "overlay/shader.js"
       ]
     }

@@ -43,31 +43,30 @@ async function toggleState() {
     const newState = !currentState;
     const success = await setState(newState);
     if (!success) {
-        console.error('💥 Toggle failed!');
         return null;
     }
     return newState;
 }
 
 /**
- * Send message to all open tabs
+ * Send message to all open tabs (optimized)
  * @param {Object} message - Message object to broadcast
  */
 async function broadcastToAllTabs(message) {
     try {
         const tabs = await chrome.tabs.query({});
-        console.log(`📢 Broadcasting to ${tabs.length} tabs:`, message);
 
+        // Send to all tabs, ignore failures
         const promises = tabs.map(async (tab) => {
             try {
-                await chrome.tabs.sendMessage(tab.id, message);
+                return await chrome.tabs.sendMessage(tab.id, message);
             } catch (error) {
-                // Ignore tabs that cannot receive messages
+                // Ignore individual tab failures (chrome://, extensions, no content script, etc.)
+                return null;
             }
         });
 
-        await Promise.all(promises);
-        console.log('✅ Broadcast completed');
+        const results = await Promise.allSettled(promises);
     } catch (error) {
         console.error('❌ Broadcast error:', error);
     }
@@ -79,7 +78,6 @@ async function broadcastToAllTabs(message) {
  */
 async function handleGetState() {
     const state = await getState();
-    console.log('📖 State sent:', state);
     return { success: true, data: { enabled: state } };
 }
 
@@ -95,7 +93,6 @@ async function handleSetState(enabled) {
             type: 'SHADER_STATE_CHANGED',
             data: { enabled }
         });
-        console.log('✅ State changed and broadcasted:', enabled);
         return { success: true, data: { enabled } };
     } else {
         return { success: false, error: 'Failed to save state' };
@@ -113,7 +110,6 @@ async function handleToggleState() {
             type: 'SHADER_STATE_CHANGED',
             data: { enabled: newState }
         });
-        console.log('🔀 Toggle successful and broadcasted:', newState);
         return { success: true, data: { enabled: newState } };
     } else {
         return { success: false, error: 'Failed to toggle state' };
@@ -124,27 +120,27 @@ async function handleToggleState() {
  * Main message handler for chrome extension
  * Processes messages from popup and content scripts
  */
-chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-    try {
-        let response;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    (async () => {
+        try {
+            let response;
 
-        if (message.action === 'GET_STATE') {
-            response = await handleGetState();
-        }
-        if (message.action === 'SET_STATE') {
-            response = await handleSetState(message.data.enabled);
-        }
-        if (message.action === 'TOGGLE_STATE') {
-            response = await handleToggleState();
-        }
-        if (!response) {
-            response = { success: false, error: 'Unknown action' };
-        }
+            if (message.action === 'GET_STATE') {
+                response = await handleGetState();
+            } else if (message.action === 'SET_STATE') {
+                response = await handleSetState(message.data.enabled);
+            } else if (message.action === 'TOGGLE_STATE') {
+                response = await handleToggleState();
+            } else {
+                response = { success: false, error: 'Unknown action' };
+            }
 
-        sendResponse(response);
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+            sendResponse(response);
+        } catch (error) {
+            console.error('💥 Message handler error:', error);
+            sendResponse({ success: false, error: error.message });
+        }
+    })();
 
     return true;
 });

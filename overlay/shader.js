@@ -241,11 +241,60 @@ async function initWebGL() {
     console.log('WebGL overlay initialized successfully');
 }
 
+/**
+ * Check initial shader state and init WebGL accordingly
+ */
+async function checkInitialState() {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            action: 'GET_STATE'
+        });
+
+        if (response && response.success && response.data.enabled) {
+            await initWebGL();
+        }
+    } catch (error) {
+        console.error('💥 Error getting initial state:', error);
+    }
+}
+
+/**
+ * Toggle overlay visibility
+ * @param {boolean} enabled - Whether to show the overlay
+ */
+function toggleOverlayVisibility(enabled) {
+    const overlay = document.getElementById('shade-overlay');
+
+    if (overlay) {
+        overlay.style.display = enabled ? 'block' : 'none';
+    } else if (enabled) {
+        // If overlay doesn't exist but should be enabled, create it
+        initWebGL();
+    }
+}
+
+/**
+ * Listen for messages from StateManager
+ */
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+    if (message.type === 'SHADER_STATE_CHANGED') {
+        toggleOverlayVisibility(message.data.enabled);
+
+        // Send response to acknowledge receipt
+        sendResponse({ received: true });
+        return true; // Indicate async response
+    }
+
+    // Don't return true for unhandled messages
+    return false;
+});
+
 // Start everything when the page is ready
 if (document.readyState === 'loading') {
     // Page is still loading, wait for it to finish
-    document.addEventListener('DOMContentLoaded', initWebGL);
+    document.addEventListener('DOMContentLoaded', checkInitialState);
 } else {
     // Page is already loaded, start right away
-    initWebGL();
+    checkInitialState();
 }
