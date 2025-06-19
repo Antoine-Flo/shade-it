@@ -114,7 +114,6 @@ async function cleanupTabShader(tabId) {
         });
     } catch (error) {
         // Tab might be closed or not have content script, that's ok
-        console.log(`Tab ${tabId} cleanup failed (probably closed):`, error.message);
     }
 }
 
@@ -130,7 +129,7 @@ async function activateTabShader(tabId, state) {
             data: state
         });
     } catch (error) {
-        console.log(`Tab ${tabId} activation failed:`, error.message);
+        // Tab might be closed or not have content script, that's ok
     }
 }
 

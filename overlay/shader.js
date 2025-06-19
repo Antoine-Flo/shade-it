@@ -135,7 +135,6 @@ function setupCanvasResize(gl, overlay) {
                 overlay.height = height;
                 // Tell WebGL about the new size
                 gl.viewport(0, 0, width, height);
-                console.log('Canvas resized to:', width, 'x', height);
             }
         }, 16); // About 60 times per second max
     };
@@ -162,7 +161,6 @@ function renderLoop(gl, program) {
     function render(currentTimeMs) {
         // Check if we should stop animation
         if (shouldStopAnimation) {
-            console.log('Animation stopped');
             return;
         }
 
@@ -194,7 +192,6 @@ function renderLoop(gl, program) {
         animationFrameId = requestAnimationFrame(render);
     }
 
-    console.log('Starting render loop');
     // Start the animation
     animationFrameId = requestAnimationFrame(render);
 }
@@ -214,8 +211,6 @@ let shouldStopAnimation = false;
  * Clean up overlay canvas and stop all animations
  */
 function cleanupOverlay() {
-    console.log('Cleaning up shader overlay');
-
     // Stop animation loop
     shouldStopAnimation = true;
     if (animationFrameId) {
@@ -236,7 +231,6 @@ function cleanupOverlay() {
     const overlay = document.getElementById('shade-overlay');
     if (overlay) {
         overlay.remove();
-        console.log('Overlay canvas removed');
     }
 
     // Reset state
@@ -287,8 +281,6 @@ async function initWebGL(shaderType = 'flames') {
         return;
     }
 
-    console.log('WebGL2 context created successfully');
-
     // Enable blending so transparency works correctly
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -316,14 +308,10 @@ async function initWebGL(shaderType = 'flames') {
         return;
     }
 
-    console.log('Shaders compiled and program linked successfully');
-
     // Set up the rectangle shape we'll draw
     setupVertexBuffer(gl, program);
     // Start the animation loop
     renderLoop(gl, program);
-
-    console.log('WebGL overlay initialized successfully');
 }
 
 /**

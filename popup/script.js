@@ -92,16 +92,11 @@ async function handleShaderChange() {
   const selectedShader = shaderSelect.value;
 
   try {
-    const response = await chrome.runtime.sendMessage({
+    await chrome.runtime.sendMessage({
       action: 'CHANGE_SHADER',
       data: { shaderType: selectedShader }
     });
 
-    if (response && response.success) {
-      console.log('Shader changed to:', selectedShader);
-    } else {
-      console.error('❌ Failed to change shader:', response ? response.error : 'No response');
-    }
   } catch (error) {
     console.error('💥 Error changing shader:', error);
   }
