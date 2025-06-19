@@ -1,6 +1,13 @@
-/**
- * This file creates a WebGL overlay that shows animated effects on web pages
- */
+/*******************************************************************************
+ * ✨ SHADE IT - WEBGL OVERLAY RENDERER
+ * ---------------------------------------------------------------------------
+ * Creates animated shader effects on web pages using WebGL2.
+ ******************************************************************************/
+
+/*=============================================================================
+ * CANVAS & WEBGL SETUP
+ * Basic WebGL initialization and shader compilation
+ *============================================================================*/
 
 /**
  * Creates a canvas element that covers the entire viewport
@@ -94,6 +101,11 @@ function setupVertexBuffer(gl, program) {
     gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 }
 
+/*=============================================================================
+ * RENDERING & ANIMATION
+ * Canvas resizing and render loop management
+ *============================================================================*/
+
 /** @type {number|null} Used to prevent too many resize events */
 let resizeTimeoutId = null;
 
@@ -178,6 +190,11 @@ function renderLoop(gl, program) {
     requestAnimationFrame(render);
 }
 
+/*=============================================================================
+ * SHADER MANAGEMENT
+ * Shader loading, switching and overlay control
+ *============================================================================*/
+
 /** @type {string} Current shader type */
 let currentShaderType = 'flames';
 
@@ -256,23 +273,6 @@ async function initWebGL(shaderType = 'flames') {
 }
 
 /**
- * Check initial shader state and init WebGL accordingly
- */
-async function checkInitialState() {
-    try {
-        const response = await chrome.runtime.sendMessage({
-            action: 'GET_STATE'
-        });
-
-        if (response && response.success && response.data.enabled) {
-            await initWebGL();
-        }
-    } catch (error) {
-        console.error('💥 Error getting initial state:', error);
-    }
-}
-
-/**
  * Toggle overlay visibility
  * @param {boolean} enabled - Whether to show the overlay
  */
@@ -283,7 +283,7 @@ function toggleOverlayVisibility(enabled) {
         overlay.style.display = enabled ? 'block' : 'none';
     } else if (enabled) {
         // If overlay doesn't exist but should be enabled, create it
-        initWebGL();
+        initWebGL(currentShaderType);
     }
 }
 
@@ -296,7 +296,6 @@ async function changeShader(shaderType) {
         return;
     }
 
-
     // Remove existing overlay
     const existingOverlay = document.getElementById('shade-overlay');
     if (existingOverlay) {
@@ -308,11 +307,34 @@ async function changeShader(shaderType) {
     await initWebGL(shaderType);
 }
 
+/*=============================================================================
+ * MESSAGE HANDLING & INITIALIZATION
+ * Extension message listeners and startup logic
+ *============================================================================*/
+
+/**
+ * Check initial shader state and init WebGL accordingly
+ */
+async function checkInitialState() {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            action: 'GET_STATE'
+        });
+
+        if (response && response.success) {
+            if (response.data.enabled) {
+                await initWebGL(response.data.shaderType);
+            }
+        }
+    } catch (error) {
+        console.error('💥 Error getting initial state:', error);
+    }
+}
+
 /**
  * Listen for messages from StateManager
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
     if (message.type === 'SHADER_STATE_CHANGED') {
         toggleOverlayVisibility(message.data.enabled);
 
@@ -322,7 +344,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'CHANGE_SHADER') {
-        changeShader(message.data.shaderType);
+        if (message.data.enabled) {
+            changeShader(message.data.shaderType);
+        }
 
         // Send response to acknowledge receipt
         sendResponse({ received: true });

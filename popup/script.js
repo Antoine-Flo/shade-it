@@ -16,24 +16,35 @@ function updateButtonState(enabled) {
 }
 
 /**
- * Get current state and update button
+ * Update shader selection dropdown
+ * @param {string} shaderType - Current shader type
  */
-async function initButtonState() {
-  try {
+function updateShaderSelection(shaderType) {
+  const shaderSelect = document.getElementById('shaderSelect');
+  shaderSelect.value = shaderType;
+}
 
+/**
+ * Get current state and update UI
+ */
+async function initPopupState() {
+  try {
     const response = await chrome.runtime.sendMessage({
       action: 'GET_STATE'
     });
 
     if (response && response.success) {
       updateButtonState(response.data.enabled);
+      updateShaderSelection(response.data.shaderType);
     } else {
       console.error('❌ Failed to get initial state');
-      updateButtonState(false); // Default to off
+      updateButtonState(false);
+      updateShaderSelection('flames');
     }
   } catch (error) {
     console.error('💥 Error getting initial state:', error);
-    updateButtonState(false); // Default to off
+    updateButtonState(false);
+    updateShaderSelection('flames');
   }
 }
 
@@ -58,8 +69,9 @@ async function toggleOverlay() {
     });
 
     if (response && response.success) {
-      // Update button with real state (in case of mismatch)
+      // Update UI with real state (in case of mismatch)
       updateButtonState(response.data.enabled);
+      updateShaderSelection(response.data.shaderType);
     } else {
       console.error('❌ Toggle failed:', response ? response.error : 'No response');
       // Revert optimistic update on failure
@@ -80,27 +92,24 @@ async function handleShaderChange() {
   const selectedShader = shaderSelect.value;
 
   try {
-    // Send message to all tabs to change shader
-    const tabs = await chrome.tabs.query({});
+    const response = await chrome.runtime.sendMessage({
+      action: 'CHANGE_SHADER',
+      data: { shaderType: selectedShader }
+    });
 
-    for (const tab of tabs) {
-      chrome.tabs.sendMessage(tab.id, {
-        type: 'CHANGE_SHADER',
-        data: { shaderType: selectedShader }
-      }).catch(() => {
-        // Ignore errors for tabs that don't have the content script
-      });
+    if (response && response.success) {
+      console.log('Shader changed to:', selectedShader);
+    } else {
+      console.error('❌ Failed to change shader:', response ? response.error : 'No response');
     }
-
-    console.log('Shader changed to:', selectedShader);
   } catch (error) {
-    console.error('Error changing shader:', error);
+    console.error('💥 Error changing shader:', error);
   }
 }
 
 // Initialize when popup opens
 document.addEventListener('DOMContentLoaded', () => {
-  initButtonState();
+  initPopupState();
   document.getElementById('toggleOverlay').addEventListener('click', toggleOverlay);
   document.getElementById('shaderSelect').addEventListener('change', handleShaderChange);
 });
