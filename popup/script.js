@@ -72,8 +72,35 @@ async function toggleOverlay() {
   }
 }
 
+/**
+ * Handle shader selection change
+ */
+async function handleShaderChange() {
+  const shaderSelect = document.getElementById('shaderSelect');
+  const selectedShader = shaderSelect.value;
+
+  try {
+    // Send message to all tabs to change shader
+    const tabs = await chrome.tabs.query({});
+
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'CHANGE_SHADER',
+        data: { shaderType: selectedShader }
+      }).catch(() => {
+        // Ignore errors for tabs that don't have the content script
+      });
+    }
+
+    console.log('Shader changed to:', selectedShader);
+  } catch (error) {
+    console.error('Error changing shader:', error);
+  }
+}
+
 // Initialize when popup opens
 document.addEventListener('DOMContentLoaded', () => {
   initButtonState();
   document.getElementById('toggleOverlay').addEventListener('click', toggleOverlay);
+  document.getElementById('shaderSelect').addEventListener('change', handleShaderChange);
 });

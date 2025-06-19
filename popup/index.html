@@ -63,11 +63,49 @@
       background: white;
       box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
     }
+
+    .shader-selector {
+      margin-bottom: 16px;
+      text-align: center;
+    }
+
+    .shader-selector label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #ccc;
+    }
+
+    .shader-selector select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #555;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .shader-selector select:focus {
+      outline: none;
+      border-color: #ff6b35;
+    }
   </style>
 </head>
 
 <body>
   <h1>Shade It</h1>
+
+  <div class="shader-selector">
+    <label for="shaderSelect">Shader:</label>
+    <select id="shaderSelect">
+      <option value="flames">Flames</option>
+      <option value="clouds">Clouds</option>
+      <option value="smoke">Smoke</option>
+    </select>
+  </div>
+
   <button id="toggleOverlay" class="toggle-btn off">
     <div class="status-dot"></div>
     <span id="buttonText">OFF</span>

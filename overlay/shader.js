@@ -178,12 +178,27 @@ function renderLoop(gl, program) {
     requestAnimationFrame(render);
 }
 
+/** @type {string} Current shader type */
+let currentShaderType = 'flames';
+
+/**
+ * Load shader files for a specific shader type
+ * @param {string} shaderType - Type of shader (flames, clouds, etc.)
+ * @returns {Promise<{vertex: string, fragment: string}>} Shader source code
+ */
+async function loadShaderSources(shaderType) {
+    const vertexSource = await fetch(chrome.runtime.getURL(`overlay/shaders/${shaderType}/vertex.glsl`)).then(r => r.text());
+    const fragmentSource = await fetch(chrome.runtime.getURL(`overlay/shaders/${shaderType}/fragment.glsl`)).then(r => r.text());
+    return { vertex: vertexSource, fragment: fragmentSource };
+}
+
 /**
  * Main initialization function that sets up WebGL overlay
+ * @param {string} shaderType - Type of shader to initialize with
  * @returns {Promise<void>}
  */
-async function initWebGL() {
-    console.log('Initializing WebGL overlay...');
+async function initWebGL(shaderType = 'flames') {
+    currentShaderType = shaderType;
 
     // Create the canvas to draw on
     const overlay = createOverlayCanvas();
@@ -211,12 +226,11 @@ async function initWebGL() {
     setupCanvasResize(gl, overlay);
 
     // Load the shader files from the extension
-    const vertexSource = await fetch(chrome.runtime.getURL('overlay/shaders/flames/vertex.glsl')).then(r => r.text());
-    const fragmentSource = await fetch(chrome.runtime.getURL('overlay/shaders/flames/fragment.glsl')).then(r => r.text());
+    const shaderSources = await loadShaderSources(shaderType);
 
     // Create both types of shaders
-    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, shaderSources.vertex);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, shaderSources.fragment);
 
     // Make sure both shaders were created successfully
     if (!vertexShader || !fragmentShader) {
@@ -274,12 +288,41 @@ function toggleOverlayVisibility(enabled) {
 }
 
 /**
+ * Change shader type dynamically
+ * @param {string} shaderType - New shader type to load
+ */
+async function changeShader(shaderType) {
+    if (shaderType === currentShaderType) {
+        return;
+    }
+
+
+    // Remove existing overlay
+    const existingOverlay = document.getElementById('shade-overlay');
+    if (existingOverlay) {
+        existingOverlay.remove();
+    }
+
+    // Initialize with new shader type
+    currentShaderType = shaderType;
+    await initWebGL(shaderType);
+}
+
+/**
  * Listen for messages from StateManager
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === 'SHADER_STATE_CHANGED') {
         toggleOverlayVisibility(message.data.enabled);
+
+        // Send response to acknowledge receipt
+        sendResponse({ received: true });
+        return true; // Indicate async response
+    }
+
+    if (message.type === 'CHANGE_SHADER') {
+        changeShader(message.data.shaderType);
 
         // Send response to acknowledge receipt
         sendResponse({ received: true });
