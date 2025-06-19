@@ -109,13 +109,16 @@ function setupVertexBuffer(gl, program) {
 /** @type {number|null} Used to prevent too many resize events */
 let resizeTimeoutId = null;
 
+/** @type {Function|null} Resize handler for cleanup */
+let handleResize = null;
+
 /**
  * Handles canvas resizing when window size changes
  * @param {WebGLRenderingContext} gl - WebGL context
  * @param {HTMLCanvasElement} overlay - Canvas element to resize
  */
 function setupCanvasResize(gl, overlay) {
-    function resizeCanvas() {
+    handleResize = function resizeCanvas() {
         // Cancel any pending resize to avoid doing it too often
         if (resizeTimeoutId) {
             clearTimeout(resizeTimeoutId);
@@ -135,12 +138,12 @@ function setupCanvasResize(gl, overlay) {
                 console.log('Canvas resized to:', width, 'x', height);
             }
         }, 16); // About 60 times per second max
-    }
+    };
 
     // Resize once when we start
-    resizeCanvas();
+    handleResize();
     // Resize whenever the window changes size
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', handleResize);
 }
 
 /**
@@ -157,12 +160,18 @@ function renderLoop(gl, program) {
 
     // This function runs once for each frame of animation
     function render(currentTimeMs) {
+        // Check if we should stop animation
+        if (shouldStopAnimation) {
+            console.log('Animation stopped');
+            return;
+        }
+
         const currentTime = currentTimeMs / 1000; // Convert to seconds
         const deltaTime = currentTime - lastFrameTime;
 
         // Don't draw if it's too soon (keeps smooth 60fps)
         if (deltaTime < 1 / 60) {
-            requestAnimationFrame(render);
+            animationFrameId = requestAnimationFrame(render);
             return;
         }
 
@@ -182,12 +191,57 @@ function renderLoop(gl, program) {
         gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 
         // Schedule the next frame
-        requestAnimationFrame(render);
+        animationFrameId = requestAnimationFrame(render);
     }
 
     console.log('Starting render loop');
     // Start the animation
-    requestAnimationFrame(render);
+    animationFrameId = requestAnimationFrame(render);
+}
+
+/*=============================================================================
+ * CLEANUP & RESOURCE MANAGEMENT
+ * Canvas removal and animation stopping
+ *============================================================================*/
+
+/** @type {number|null} Animation frame ID for cleanup */
+let animationFrameId = null;
+
+/** @type {boolean} Flag to stop animation loop */
+let shouldStopAnimation = false;
+
+/**
+ * Clean up overlay canvas and stop all animations
+ */
+function cleanupOverlay() {
+    console.log('Cleaning up shader overlay');
+
+    // Stop animation loop
+    shouldStopAnimation = true;
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+
+    // Remove resize event listener
+    window.removeEventListener('resize', handleResize);
+
+    // Clear resize timeout
+    if (resizeTimeoutId) {
+        clearTimeout(resizeTimeoutId);
+        resizeTimeoutId = null;
+    }
+
+    // Remove canvas from DOM
+    const overlay = document.getElementById('shade-overlay');
+    if (overlay) {
+        overlay.remove();
+        console.log('Overlay canvas removed');
+    }
+
+    // Reset state
+    currentShaderType = 'flames';
+    shouldStopAnimation = false;
 }
 
 /*=============================================================================
@@ -275,15 +329,20 @@ async function initWebGL(shaderType = 'flames') {
 /**
  * Toggle overlay visibility
  * @param {boolean} enabled - Whether to show the overlay
+ * @param {string} shaderType - Type of shader to use when enabling
  */
-function toggleOverlayVisibility(enabled) {
-    const overlay = document.getElementById('shade-overlay');
-
-    if (overlay) {
-        overlay.style.display = enabled ? 'block' : 'none';
-    } else if (enabled) {
-        // If overlay doesn't exist but should be enabled, create it
-        initWebGL(currentShaderType);
+function toggleOverlayVisibility(enabled, shaderType = 'flames') {
+    if (enabled) {
+        // Update current shader type
+        currentShaderType = shaderType;
+        // If should be enabled, create/recreate overlay
+        const overlay = document.getElementById('shade-overlay');
+        if (!overlay) {
+            initWebGL(shaderType);
+        }
+    } else {
+        // If should be disabled, clean up properly
+        cleanupOverlay();
     }
 }
 
@@ -296,11 +355,8 @@ async function changeShader(shaderType) {
         return;
     }
 
-    // Remove existing overlay
-    const existingOverlay = document.getElementById('shade-overlay');
-    if (existingOverlay) {
-        existingOverlay.remove();
-    }
+    // Clean up existing overlay properly
+    cleanupOverlay();
 
     // Initialize with new shader type
     currentShaderType = shaderType;
@@ -336,7 +392,7 @@ async function checkInitialState() {
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'SHADER_STATE_CHANGED') {
-        toggleOverlayVisibility(message.data.enabled);
+        toggleOverlayVisibility(message.data.enabled, message.data.shaderType);
 
         // Send response to acknowledge receipt
         sendResponse({ received: true });
@@ -347,6 +403,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.data.enabled) {
             changeShader(message.data.shaderType);
         }
+
+        // Send response to acknowledge receipt
+        sendResponse({ received: true });
+        return true; // Indicate async response
+    }
+
+    if (message.type === 'CLEANUP_SHADER') {
+        cleanupOverlay();
 
         // Send response to acknowledge receipt
         sendResponse({ received: true });

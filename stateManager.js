@@ -1,5 +1,3 @@
-
-
 /*******************************************************************************
  * SERVICE WORKER BACKGROUND SCRIPT 
  * ---------------------------------------------------------------------------
@@ -68,6 +66,75 @@ async function toggleState() {
 }
 
 /*=============================================================================
+ * TAB TRACKING
+ * Track active tab and manage shader switching between tabs
+ *============================================================================*/
+
+/** @type {number|null} ID of the tab that currently has the shader active */
+let currentShaderTabId = null;
+
+// Listen for tab activation changes
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    await handleTabSwitch(activeInfo.tabId);
+});
+
+/**
+ * Handle active tab change - move shader from old tab to new tab
+ * @param {number} newActiveTabId - ID of newly active tab
+ */
+async function handleTabSwitch(newActiveTabId) {
+    const state = await getState();
+
+    // Only do something if shader is enabled
+    if (!state.enabled) {
+        return;
+    }
+
+    // Store old tab ID for cleanup
+    const oldTabId = currentShaderTabId;
+
+    // Activate on new tab first
+    currentShaderTabId = newActiveTabId;
+    await activateTabShader(newActiveTabId, state);
+
+    // Then clean up old tab if there was one
+    if (oldTabId && oldTabId !== newActiveTabId) {
+        await cleanupTabShader(oldTabId);
+    }
+}
+
+/**
+ * Clean up shader from a specific tab
+ * @param {number} tabId - Tab ID to clean up
+ */
+async function cleanupTabShader(tabId) {
+    try {
+        await chrome.tabs.sendMessage(tabId, {
+            type: 'CLEANUP_SHADER'
+        });
+    } catch (error) {
+        // Tab might be closed or not have content script, that's ok
+        console.log(`Tab ${tabId} cleanup failed (probably closed):`, error.message);
+    }
+}
+
+/**
+ * Activate shader on a specific tab
+ * @param {number} tabId - Tab ID to activate shader on
+ * @param {Object} state - Current shader state
+ */
+async function activateTabShader(tabId, state) {
+    try {
+        await chrome.tabs.sendMessage(tabId, {
+            type: 'SHADER_STATE_CHANGED',
+            data: state
+        });
+    } catch (error) {
+        console.log(`Tab ${tabId} activation failed:`, error.message);
+    }
+}
+
+/*=============================================================================
  * MESSAGE HANDLER
  * Handles messages from popup and content scripts
  *============================================================================*/
@@ -113,22 +180,49 @@ async function handleGetState() {
 }
 
 /**
+ * Utility to update shader state and manage tabs
+ * @param {Function} stateUpdater - Function that updates the state and returns new state or null
+ * @returns {Promise<Object>} Response object with result
+ */
+async function updateShaderState(stateUpdater) {
+    const newState = await stateUpdater();
+
+    if (newState === null) {
+        return { success: false, error: 'Failed to update state' };
+    }
+
+    // Handle shader disable - cleanup current tab
+    if (!newState.enabled && currentShaderTabId) {
+        await cleanupTabShader(currentShaderTabId);
+        currentShaderTabId = null;
+        return { success: true, data: newState };
+    }
+
+    // Handle shader enable - activate on current tab
+    if (newState.enabled) {
+        const activeTab = await getActiveTab();
+        if (activeTab) {
+            currentShaderTabId = activeTab.id;
+            await activateTabShader(activeTab.id, newState);
+        }
+    }
+
+    return { success: true, data: newState };
+}
+
+/**
  * Handle set state request
  * @param {boolean} enabled - New shader state
  * @returns {Promise<Object>} Response object with result
  */
 async function handleSetState(enabled) {
-    const success = await setState(enabled);
-    if (success) {
-        const state = await getState();
-        await sendToActiveTab({
-            type: 'SHADER_STATE_CHANGED',
-            data: state
-        });
-        return { success: true, data: state };
-    } else {
-        return { success: false, error: 'Failed to save state' };
-    }
+    return await updateShaderState(async () => {
+        const success = await setState(enabled);
+        if (!success) {
+            return null;
+        }
+        return await getState();
+    });
 }
 
 /**
@@ -136,16 +230,9 @@ async function handleSetState(enabled) {
  * @returns {Promise<Object>} Response object with new state
  */
 async function handleToggleState() {
-    const newState = await toggleState();
-    if (newState !== null) {
-        await sendToActiveTab({
-            type: 'SHADER_STATE_CHANGED',
-            data: newState
-        });
-        return { success: true, data: newState };
-    } else {
-        return { success: false, error: 'Failed to toggle state' };
-    }
+    return await updateShaderState(async () => {
+        return await toggleState();
+    });
 }
 
 /**
@@ -154,37 +241,37 @@ async function handleToggleState() {
  * @returns {Promise<Object>} Response object with result
  */
 async function handleChangeShader(shaderType) {
-    const currentState = await getState();
-    const success = await setState(currentState.enabled, shaderType);
-    if (success) {
-        const newState = await getState();
-        await sendToActiveTab({
-            type: 'CHANGE_SHADER',
-            data: newState
-        });
-        return { success: true, data: newState };
-    } else {
-        return { success: false, error: 'Failed to save shader type' };
-    }
+    return await updateShaderState(async () => {
+        const currentState = await getState();
+        const success = await setState(currentState.enabled, shaderType);
+        if (!success) {
+            return null;
+        }
+
+        const newState = { enabled: currentState.enabled, shaderType };
+
+        // Send change shader message if enabled and we have active tab
+        if (newState.enabled && currentShaderTabId) {
+            await chrome.tabs.sendMessage(currentShaderTabId, {
+                type: 'CHANGE_SHADER',
+                data: newState
+            });
+        }
+
+        return newState;
+    });
 }
 
 /**
- * Send message to active tab only
- * @param {Object} message - Message object to send
+ * Get the currently active tab
+ * @returns {Promise<chrome.tabs.Tab|null>} Active tab or null if not found
  */
-async function sendToActiveTab(message) {
+async function getActiveTab() {
     try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        if (tabs.length > 0) {
-            try {
-                await chrome.tabs.sendMessage(tabs[0].id, message);
-            } catch (error) {
-                // Ignore if tab doesn't have content script
-                console.log('No content script in active tab (normal for chrome:// pages)');
-            }
-        }
+        return tabs.length > 0 ? tabs[0] : null;
     } catch (error) {
-        console.error('❌ Send to active tab error:', error);
+        console.error('❌ Get active tab error:', error);
+        return null;
     }
 }
