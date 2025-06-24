@@ -33,7 +33,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "overlay/*.glsl"
+        "overlay/*.wgsl",
+        "overlay/shaders/*.wgsl",
+        "overlay/shaders/*/*.wgsl"
       ],
       "matches": [
         "<all_urls>"

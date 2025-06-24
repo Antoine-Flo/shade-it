@@ -118,6 +118,20 @@ async function cleanupTabShader(tabId) {
 }
 
 /**
+ * Clean up shader from ALL tabs (when disabling globally)
+ */
+async function cleanupAllTabs() {
+    try {
+        const tabs = await chrome.tabs.query({});
+        const cleanupPromises = tabs.map(tab => cleanupTabShader(tab.id));
+        await Promise.all(cleanupPromises);
+        console.log(`🧹 Cleaned up shader from ${tabs.length} tabs`);
+    } catch (error) {
+        console.error('❌ Cleanup all tabs error:', error);
+    }
+}
+
+/**
  * Activate shader on a specific tab
  * @param {number} tabId - Tab ID to activate shader on
  * @param {Object} state - Current shader state
@@ -130,6 +144,28 @@ async function activateTabShader(tabId, state) {
         });
     } catch (error) {
         // Tab might be closed or not have content script, that's ok
+    }
+}
+
+/**
+ * Broadcast shader change to ALL tabs
+ * @param {Object} state - Current shader state
+ */
+async function broadcastShaderChange(state) {
+    try {
+        const tabs = await chrome.tabs.query({});
+        const broadcastPromises = tabs.map(tab => {
+            return chrome.tabs.sendMessage(tab.id, {
+                type: 'CHANGE_SHADER',
+                data: state
+            }).catch(() => {
+                // Tab might be closed or not have content script, that's ok
+            });
+        });
+        await Promise.all(broadcastPromises);
+        console.log(`🔄 Broadcasted shader change to ${tabs.length} tabs`);
+    } catch (error) {
+        console.error('❌ Broadcast shader change error:', error);
     }
 }
 
@@ -190,9 +226,9 @@ async function updateShaderState(stateUpdater) {
         return { success: false, error: 'Failed to update state' };
     }
 
-    // Handle shader disable - cleanup current tab
-    if (!newState.enabled && currentShaderTabId) {
-        await cleanupTabShader(currentShaderTabId);
+    // Handle shader disable - cleanup ALL tabs
+    if (!newState.enabled) {
+        await cleanupAllTabs();
         currentShaderTabId = null;
         return { success: true, data: newState };
     }
@@ -249,12 +285,9 @@ async function handleChangeShader(shaderType) {
 
         const newState = { enabled: currentState.enabled, shaderType };
 
-        // Send change shader message if enabled and we have active tab
-        if (newState.enabled && currentShaderTabId) {
-            await chrome.tabs.sendMessage(currentShaderTabId, {
-                type: 'CHANGE_SHADER',
-                data: newState
-            });
+        // Send change shader message to ALL tabs if enabled
+        if (newState.enabled) {
+            await broadcastShaderChange(newState);
         }
 
         return newState;

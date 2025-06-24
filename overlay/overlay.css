@@ -12,8 +12,7 @@
     margin: 0;
     padding: 0;
     border: none;
-    /* Improve rendering performance */
-    will-change: transform;
+
     /* Prevent canvas from being affected by CSS transforms */
     transform-origin: 0 0;
 }

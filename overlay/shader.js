@@ -1,13 +1,18 @@
 /*******************************************************************************
- * ✨ SHADE IT - WEBGL OVERLAY RENDERER
+ * ✨ SHADE IT - WEBGPU OVERLAY RENDERER
  * ---------------------------------------------------------------------------
- * Creates animated shader effects on web pages using WebGL2.
+ * Creates animated shader effects on web pages using WebGPU.
  ******************************************************************************/
 
 /*=============================================================================
- * CANVAS & WEBGL SETUP
- * Basic WebGL initialization and shader compilation
+ * CANVAS & WEBGPU SETUP
+ * Basic WebGPU initialization and render pipeline setup
  *============================================================================*/
+
+/** @type {GPUDevice} WebGPU device instance */
+let device = null;
+/** @type {GPUCanvasContext} WebGPU canvas context */
+let context = null;
 
 /**
  * Creates a canvas element that covers the entire viewport
@@ -17,93 +22,90 @@ function createOverlayCanvas() {
     // Make a new canvas element to draw on
     const overlay = document.createElement('canvas');
     overlay.id = 'shade-overlay';
-    // Set the canvas size to match the window size
-    overlay.width = window.innerWidth;
-    overlay.height = window.innerHeight;
     // Add the canvas to the webpage
     document.body.appendChild(overlay);
     return overlay;
 }
 
 /**
- * Creates a single shader from source code
- * @param {WebGLRenderingContext} gl - WebGL context
- * @param {number} type - Shader type (VERTEX_SHADER or FRAGMENT_SHADER)
- * @param {string} source - Shader source code
- * @returns {WebGLShader|null} Compiled shader or null if failed
+ * Initialize WebGPU adapter and device
+ * @returns {Promise<{adapter: GPUAdapter, device: GPUDevice}>} WebGPU objects
  */
-function createShader(gl, type, source) {
-    // Make a new shader object
-    const shader = gl.createShader(type);
-    // Give it the shader code
-    gl.shaderSource(shader, source);
-    // Turn the code into something the graphics card can use
-    gl.compileShader(shader);
-
-    // Check if the shader compiled correctly
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
-        gl.deleteShader(shader);
-        return null;
+async function getWebGPUDevice() {
+    // Check if WebGPU is supported
+    if (!navigator.gpu) {
+        throw new Error('WebGPU not supported in this browser');
     }
-    return shader;
+
+    // Request GPU adapter (like asking for graphics card access)
+    const adapter = await navigator.gpu.requestAdapter({
+        powerPreference: 'high-performance'
+    });
+
+    if (!adapter) {
+        throw new Error('No appropriate GPUAdapter found');
+    }
+
+    // Request device (like opening connection to graphics card)
+    const device = await adapter.requestDevice({
+        requiredFeatures: [],
+        requiredLimits: {}
+    });
+
+    return device;
 }
 
 /**
- * Links two shaders together to make a complete graphics program
- * @param {WebGLRenderingContext} gl - WebGL context
- * @param {WebGLShader} vertexShader - Compiled vertex shader
- * @param {WebGLShader} fragmentShader - Compiled fragment shader
- * @returns {WebGLProgram|null} Linked program or null if failed
+ * Setup WebGPU canvas context and configure surface
+ * @param {HTMLCanvasElement} canvas - Canvas element
+ * @param {GPUDevice} device - WebGPU device
+ * @returns {GPUCanvasContext} Configured canvas context
  */
-function createProgram(gl, vertexShader, fragmentShader) {
-    // Create a new program to hold both shaders
-    const program = gl.createProgram();
-    // Attach both shaders to the program
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    // Connect everything together
-    gl.linkProgram(program);
-
-    // Check if linking worked
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error('Program linking error:', gl.getProgramInfoLog(program));
-        return null;
+function setupWebGPUContext(canvas, device) {
+    // Get WebGPU context from canvas
+    const context = canvas.getContext('webgpu');
+    if (!context) {
+        throw new Error('Failed to get WebGPU context');
     }
-    return program;
-}
 
-/**
- * Sets up vertex buffer with a fullscreen quad
- * @param {WebGLRenderingContext} gl - WebGL context
- * @param {WebGLProgram} program - Shader program
- */
-function setupVertexBuffer(gl, program) {
-    // Four corners of a rectangle that covers the screen
-    // -1 to 1 in both x and y directions
-    const vertices = new Float32Array([
-        -1, -1,  // bottom left
-        1, -1,   // bottom right
-        1, 1,    // top right
-        -1, 1    // top left
-    ]);
+    // Configure the canvas surface
+    context.configure({
+        device,
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        alphaMode: 'premultiplied'
+    });
 
-    // Create a buffer to hold our shape data
-    const vertexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    // Put our rectangle data into the buffer
-    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-
-    // Tell the shader where to find the position data
-    const positionLocation = gl.getAttribLocation(program, 'position');
-    gl.enableVertexAttribArray(positionLocation);
-    // Each position has 2 numbers (x and y)
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    return context;
 }
 
 /*=============================================================================
+ * WGSL SHADER DEFINITIONS
+ * All shader source code in WGSL format
+ *============================================================================*/
+
+
+/**
+ * Load shader sources from external WGSL files
+ * @param {string} shaderType - Type of shader (flames, clouds, smoke)
+ * @returns {Promise<{vertex: string, fragment: string}>} WGSL shader code
+ */
+async function loadShaderSources(shaderType) {
+    try {
+        const [vertexSource, fragmentSource] = await Promise.all([
+            fetch(chrome.runtime.getURL('overlay/shaders/vertex.wgsl')).then(r => r.text()),
+            fetch(chrome.runtime.getURL(`overlay/shaders/${shaderType}/fragment.wgsl`)).then(r => r.text())
+        ]);
+        return { vertex: vertexSource, fragment: fragmentSource };
+    } catch (error) {
+        console.warn(`⚠️ Failed to load ${shaderType} shader.`, error);
+    }
+}
+
+
+
+/*=============================================================================
  * RENDERING & ANIMATION
- * Canvas resizing and render loop management
+ * Canvas resizing and WebGPU render loop management
  *============================================================================*/
 
 /** @type {number|null} Used to prevent too many resize events */
@@ -114,10 +116,10 @@ let handleResize = null;
 
 /**
  * Handles canvas resizing when window size changes
- * @param {WebGLRenderingContext} gl - WebGL context
+ * @param {GPUCanvasContext} context - WebGPU canvas context
  * @param {HTMLCanvasElement} overlay - Canvas element to resize
  */
-function setupCanvasResize(gl, overlay) {
+function setupCanvasResize(context, overlay) {
     handleResize = function resizeCanvas() {
         // Cancel any pending resize to avoid doing it too often
         if (resizeTimeoutId) {
@@ -133,8 +135,7 @@ function setupCanvasResize(gl, overlay) {
             if (overlay.width !== width || overlay.height !== height) {
                 overlay.width = width;
                 overlay.height = height;
-                // Tell WebGL about the new size
-                gl.viewport(0, 0, width, height);
+                // WebGPU context will automatically handle the resize
             }
         }, 16); // About 60 times per second max
     };
@@ -146,15 +147,14 @@ function setupCanvasResize(gl, overlay) {
 }
 
 /**
- * Main animation loop that runs continuously
- * @param {WebGLRenderingContext} gl - WebGL context
- * @param {WebGLProgram} program - Shader program to render
+ * Main WebGPU render loop that runs continuously
+ * Uses global variables that can be updated during shader switching
+ * @param {GPUDevice} device - WebGPU device
+ * @param {GPUCanvasContext} context - WebGPU canvas context
  */
-function renderLoop(gl, program) {
-    // Get the location where we can send time info to the shader
-    const timeLocation = gl.getUniformLocation(program, 'time');
-    // Remember when we started
-    const startTime = performance.now() / 1000; // Convert to seconds
+function renderLoop(device, context) {
+    // Remember when we started for time uniforms
+    const startTime = performance.now() / 1000;
     let lastFrameTime = startTime;
 
     // This function runs once for each frame of animation
@@ -164,7 +164,13 @@ function renderLoop(gl, program) {
             return;
         }
 
-        const currentTime = currentTimeMs / 1000; // Convert to seconds
+        // Skip rendering if we don't have shader manager or resources
+        if (!shaderManager || !shaderManager.currentPipeline) {
+            animationFrameId = requestAnimationFrame(render);
+            return;
+        }
+
+        const currentTime = currentTimeMs / 1000;
         const deltaTime = currentTime - lastFrameTime;
 
         // Don't draw if it's too soon (keeps smooth 60fps)
@@ -177,16 +183,39 @@ function renderLoop(gl, program) {
         // How much time has passed since we started
         const elapsedTime = currentTime - startTime;
 
-        // Clear the screen with transparent background
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        // Update time uniform using shader manager
+        if (shaderManager) {
+            shaderManager.updateTime(elapsedTime);
+        }
 
-        // Use our shader program
-        gl.useProgram(program);
-        // Send the current time to the shader (for animation)
-        gl.uniform1f(timeLocation, elapsedTime);
-        // Draw our rectangle (4 corners connected as a fan)
-        gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+        // Create command encoder for this frame
+        const commandEncoder = device.createCommandEncoder({
+            label: 'Render Commands'
+        });
+
+        // Get current canvas texture
+        const textureView = context.getCurrentTexture().createView();
+
+        // Create render pass
+        const renderPass = commandEncoder.beginRenderPass({
+            colorAttachments: [{
+                view: textureView,
+                clearValue: { r: 0, g: 0, b: 0, a: 0 }, // Transparent background
+                loadOp: 'clear',
+                storeOp: 'store'
+            }]
+        });
+
+        // Get resources from shader manager
+        const resources = shaderManager.getRenderResources();
+        renderPass.setPipeline(resources.pipeline);
+        renderPass.setVertexBuffer(0, resources.vertexBuffer);
+        renderPass.setBindGroup(0, resources.bindGroup);
+        renderPass.draw(6); // Draw 6 vertices (2 triangles = fullscreen quad)
+        renderPass.end();
+
+        // Submit commands to GPU
+        device.queue.submit([commandEncoder.finish()]);
 
         // Schedule the next frame
         animationFrameId = requestAnimationFrame(render);
@@ -198,7 +227,7 @@ function renderLoop(gl, program) {
 
 /*=============================================================================
  * CLEANUP & RESOURCE MANAGEMENT
- * Canvas removal and animation stopping
+ * Cleanup functions for proper WebGPU resource disposal
  *============================================================================*/
 
 /** @type {number|null} Animation frame ID for cleanup */
@@ -208,110 +237,106 @@ let animationFrameId = null;
 let shouldStopAnimation = false;
 
 /**
- * Clean up overlay canvas and stop all animations
+ * Clean up WebGPU resources and remove overlay
  */
 function cleanupOverlay() {
-    // Stop animation loop
+    console.log('🧹 Cleaning up overlay...');
+
+    // Stop animation
     shouldStopAnimation = true;
     if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
     }
 
-    // Remove resize event listener
-    window.removeEventListener('resize', handleResize);
-
-    // Clear resize timeout
+    // Remove listeners
+    if (handleResize) {
+        window.removeEventListener('resize', handleResize);
+        handleResize = null;
+    }
     if (resizeTimeoutId) {
         clearTimeout(resizeTimeoutId);
         resizeTimeoutId = null;
     }
 
-    // Remove canvas from DOM
-    const overlay = document.getElementById('shade-overlay');
-    if (overlay) {
-        overlay.remove();
+    // Clean up WebGPU
+    if (shaderManager) {
+        shaderManager.destroy();
+        shaderManager = null;
+    }
+    if (device) {
+        device.destroy();
+        device = null;
     }
 
-    // Reset state
+    // Reset globals
+    context = null;
     currentShaderType = 'flames';
     shouldStopAnimation = false;
+
+    // Remove DOM element
+    const overlay = document.getElementById('shade-overlay');
+    if (overlay) overlay.remove();
 }
 
 /*=============================================================================
  * SHADER MANAGEMENT
- * Shader loading, switching and overlay control
  *============================================================================*/
 
 /** @type {string} Current shader type */
 let currentShaderType = 'flames';
 
 /**
- * Load shader files for a specific shader type
- * @param {string} shaderType - Type of shader (flames, clouds, etc.)
- * @returns {Promise<{vertex: string, fragment: string}>} Shader source code
- */
-async function loadShaderSources(shaderType) {
-    const vertexSource = await fetch(chrome.runtime.getURL(`overlay/shaders/${shaderType}/vertex.glsl`)).then(r => r.text());
-    const fragmentSource = await fetch(chrome.runtime.getURL(`overlay/shaders/${shaderType}/fragment.glsl`)).then(r => r.text());
-    return { vertex: vertexSource, fragment: fragmentSource };
-}
-
-/**
- * Main initialization function that sets up WebGL overlay
+ * Main initialization function that sets up WebGPU overlay
  * @param {string} shaderType - Type of shader to initialize with
  * @returns {Promise<void>}
  */
-async function initWebGL(shaderType = 'flames') {
-    currentShaderType = shaderType;
+async function initializeWebGPU(shaderType = 'flames') {
+    try {
+        currentShaderType = shaderType;
 
-    // Create the canvas to draw on
-    const overlay = createOverlayCanvas();
-    // Get WebGL context (the drawing interface)
-    const gl = overlay.getContext('webgl2', {
-        alpha: true,                    // Allow transparency
-        premultipliedAlpha: false,      // Handle transparency our way
-        antialias: true,                // Smooth edges
-        preserveDrawingBuffer: false    // Don't keep old frames in memory
-    });
+        // Create the canvas to draw on
+        const overlay = createOverlayCanvas();
 
-    // Check if WebGL is available
-    if (!gl) {
-        console.error('WebGL2 not supported');
-        return;
+        // Initialize WebGPU adapter and device
+        const gpuDevice = await getWebGPUDevice();
+
+        // Store device globally for cleanup
+        device = gpuDevice;
+
+        // Setup WebGPU canvas context
+        const canvasContext = setupWebGPUContext(overlay, device);
+
+        // Store context globally
+        context = canvasContext;
+
+        // Create shader manager if not exists
+        if (!shaderManager) {
+            shaderManager = new ShaderManager(device);
+            shaderManager.createSharedResources();
+        }
+
+        // Load shader code from external files
+        const { vertex: vertexCode, fragment: fragmentCode } = await loadShaderSources(shaderType);
+
+        // Create pipeline using shader manager
+        shaderManager.createPipeline(shaderType, vertexCode, fragmentCode);
+
+        // Set as current pipeline
+        shaderManager.setCurrentPipeline(shaderType);
+
+        // Set up window resizing
+        setupCanvasResize(context, overlay);
+
+        // Start the render loop (uses global variables)
+        renderLoop(device, context);
+
+        console.log(`🚀 WebGPU ${shaderType} shader ready!`);
+
+    } catch (error) {
+        console.error('💥 Failed to initialize WebGPU:', error);
+        throw error;
     }
-
-    // Enable blending so transparency works correctly
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    // Set up window resizing
-    setupCanvasResize(gl, overlay);
-
-    // Load the shader files from the extension
-    const shaderSources = await loadShaderSources(shaderType);
-
-    // Create both types of shaders
-    const vertexShader = createShader(gl, gl.VERTEX_SHADER, shaderSources.vertex);
-    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, shaderSources.fragment);
-
-    // Make sure both shaders were created successfully
-    if (!vertexShader || !fragmentShader) {
-        console.error('Failed to create shaders');
-        return;
-    }
-
-    // Combine the shaders into a complete program
-    const program = createProgram(gl, vertexShader, fragmentShader);
-    if (!program) {
-        console.error('Failed to create program');
-        return;
-    }
-
-    // Set up the rectangle shape we'll draw
-    setupVertexBuffer(gl, program);
-    // Start the animation loop
-    renderLoop(gl, program);
 }
 
 /**
@@ -326,7 +351,7 @@ function toggleOverlayVisibility(enabled, shaderType = 'flames') {
         // If should be enabled, create/recreate overlay
         const overlay = document.getElementById('shade-overlay');
         if (!overlay) {
-            initWebGL(shaderType);
+            initializeWebGPU(shaderType);
         }
     } else {
         // If should be disabled, clean up properly
@@ -335,7 +360,7 @@ function toggleOverlayVisibility(enabled, shaderType = 'flames') {
 }
 
 /**
- * Change shader type dynamically
+ * Change shader type dynamically using shader manager
  * @param {string} shaderType - New shader type to load
  */
 async function changeShader(shaderType) {
@@ -343,21 +368,28 @@ async function changeShader(shaderType) {
         return;
     }
 
-    // Clean up existing overlay properly
-    cleanupOverlay();
+    if (!shaderManager || !device) {
+        console.error('💥 No shader manager or device available');
+        return;
+    }
 
-    // Initialize with new shader type
+    console.log(`🔄 Switching to ${shaderType} shader...`);
+
+    // Load shader sources and create pipeline
+    const { vertex: vertexCode, fragment: fragmentCode } = await loadShaderSources(shaderType);
+    shaderManager.createPipeline(shaderType, vertexCode, fragmentCode);
+    shaderManager.setCurrentPipeline(shaderType);
+
     currentShaderType = shaderType;
-    await initWebGL(shaderType);
+    console.log(`✅ Switched to ${shaderType} shader!`);
 }
 
 /*=============================================================================
- * MESSAGE HANDLING & INITIALIZATION
- * Extension message listeners and startup logic
+ * MESSAGE HANDLING
  *============================================================================*/
 
 /**
- * Check initial shader state and init WebGL accordingly
+ * Check initial shader state and init WebGPU accordingly
  */
 async function checkInitialState() {
     try {
@@ -367,7 +399,7 @@ async function checkInitialState() {
 
         if (response && response.success) {
             if (response.data.enabled) {
-                await initWebGL(response.data.shaderType);
+                await initializeWebGPU(response.data.shaderType);
             }
         }
     } catch (error) {
@@ -375,45 +407,262 @@ async function checkInitialState() {
     }
 }
 
-/**
- * Listen for messages from StateManager
- */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'SHADER_STATE_CHANGED') {
-        toggleOverlayVisibility(message.data.enabled, message.data.shaderType);
+    const { type, data } = message;
 
-        // Send response to acknowledge receipt
-        sendResponse({ received: true });
-        return true; // Indicate async response
-    }
-
-    if (message.type === 'CHANGE_SHADER') {
-        if (message.data.enabled) {
-            changeShader(message.data.shaderType);
-        }
-
-        // Send response to acknowledge receipt
-        sendResponse({ received: true });
-        return true; // Indicate async response
-    }
-
-    if (message.type === 'CLEANUP_SHADER') {
+    if (type === 'SHADER_STATE_CHANGED') {
+        toggleOverlayVisibility(data.enabled, data.shaderType);
+    } else if (type === 'CHANGE_SHADER' && data.enabled) {
+        changeShader(data.shaderType);
+    } else if (type === 'CLEANUP_SHADER') {
         cleanupOverlay();
-
-        // Send response to acknowledge receipt
-        sendResponse({ received: true });
-        return true; // Indicate async response
+    } else {
+        return false;
     }
 
-    // Don't return true for unhandled messages
-    return false;
+    sendResponse({ received: true });
+    return true;
 });
 
-// Start everything when the page is ready
+// Initialize when page is ready
 if (document.readyState === 'loading') {
-    // Page is still loading, wait for it to finish
     document.addEventListener('DOMContentLoaded', checkInitialState);
 } else {
-    // Page is already loaded, start right away
     checkInitialState();
 }
+
+/*=============================================================================
+ * SHADER PIPELINE SYSTEM
+ *============================================================================*/
+class ShaderManager {
+    constructor(device) {
+        this.device = device;
+        this.pipelines = new Map(); // Cache for created pipelines
+        this.currentPipeline = null;
+        this.resources = {
+            vertexBuffer: null,
+            uniformBuffer: null,
+            bindGroup: null
+        };
+    }
+
+    /**
+     * Create shared resources used by all shaders
+     */
+    createSharedResources() {
+        // Create vertex buffer for fullscreen quad (shared by all shaders)
+        this.resources.vertexBuffer = this.createVertexBuffer();
+
+        // Create uniform buffer (shared by all shaders)
+        this.resources.uniformBuffer = this.createUniformBuffer();
+    }
+
+    /**
+     * Create vertex buffer for fullscreen quad
+     * @returns {GPUBuffer} Vertex buffer
+     */
+    createVertexBuffer() {
+        const vertices = new Float32Array([
+            -1.0, -1.0,  // bottom left
+            1.0, -1.0,  // bottom right
+            1.0, 1.0,  // top right
+            -1.0, -1.0,  // bottom left  
+            1.0, 1.0,  // top right
+            -1.0, 1.0   // top left
+        ]);
+
+        const vertexBuffer = this.device.createBuffer({
+            label: 'Shared Fullscreen Quad Vertices',
+            size: vertices.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        });
+
+        this.device.queue.writeBuffer(vertexBuffer, 0, vertices);
+        return vertexBuffer;
+    }
+
+    /**
+     * Create uniform buffer for time and other uniforms
+     * @returns {GPUBuffer} Uniform buffer
+     */
+    createUniformBuffer() {
+        return this.device.createBuffer({
+            label: 'Shared Time Uniform Buffer',
+            size: 16, // 16 bytes for alignment
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+    }
+
+    /**
+     * Create a render pipeline from WGSL shader code
+     * @param {string} name - Shader name (for caching)
+     * @param {string} vertexCode - WGSL vertex shader code
+     * @param {string} fragmentCode - WGSL fragment shader code
+     * @returns {Object} Pipeline and bind group
+     */
+    createPipeline(name, vertexCode, fragmentCode) {
+        // Check if pipeline already exists in cache
+        if (this.pipelines.has(name)) {
+            return this.pipelines.get(name);
+        }
+
+        // Create shader modules
+        let vertexShader, fragmentShader;
+        try {
+            vertexShader = this.device.createShaderModule({
+                label: `${name} Vertex Shader`,
+                code: vertexCode
+            });
+
+            fragmentShader = this.device.createShaderModule({
+                label: `${name} Fragment Shader`,
+                code: fragmentCode
+            });
+
+            console.log(`🔨 Created ${name} pipeline`);
+        } catch (error) {
+            console.error(`💥 Shader compilation failed for ${name}:`, error);
+            throw error;
+        }
+
+        // Create bind group layout for uniforms
+        const bindGroupLayout = this.device.createBindGroupLayout({
+            label: `${name} Bind Group Layout`,
+            entries: [{
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                buffer: { type: 'uniform' }
+            }]
+        });
+
+        // Create bind group
+        const bindGroup = this.device.createBindGroup({
+            label: `${name} Bind Group`,
+            layout: bindGroupLayout,
+            entries: [{
+                binding: 0,
+                resource: { buffer: this.resources.uniformBuffer }
+            }]
+        });
+
+        // Create pipeline layout
+        const pipelineLayout = this.device.createPipelineLayout({
+            label: `${name} Pipeline Layout`,
+            bindGroupLayouts: [bindGroupLayout]
+        });
+
+        // Create render pipeline
+        const pipeline = this.device.createRenderPipeline({
+            label: `${name} Render Pipeline`,
+            layout: pipelineLayout,
+            vertex: {
+                module: vertexShader,
+                entryPoint: 'vs_main',
+                buffers: [{
+                    arrayStride: 8, // 2 floats * 4 bytes
+                    attributes: [{
+                        format: 'float32x2',
+                        offset: 0,
+                        shaderLocation: 0
+                    }]
+                }]
+            },
+            fragment: {
+                module: fragmentShader,
+                entryPoint: 'fs_main',
+                targets: [{
+                    format: navigator.gpu.getPreferredCanvasFormat(),
+                    blend: {
+                        color: {
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha'
+                        },
+                        alpha: {
+                            srcFactor: 'one',
+                            dstFactor: 'one-minus-src-alpha'
+                        }
+                    }
+                }]
+            },
+            primitive: {
+                topology: 'triangle-list'
+            }
+        });
+
+        const pipelineData = {
+            pipeline,
+            bindGroup
+        };
+
+        // Cache the pipeline
+        this.pipelines.set(name, pipelineData);
+        return pipelineData;
+    }
+
+    /**
+     * Set current active pipeline
+     * @param {string} name - Shader name
+     */
+    setCurrentPipeline(name) {
+        if (this.pipelines.has(name)) {
+            this.currentPipeline = this.pipelines.get(name);
+            this.resources.bindGroup = this.currentPipeline.bindGroup;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Get current pipeline resources for rendering
+     * @returns {Object} Render resources
+     */
+    getRenderResources() {
+        if (!this.currentPipeline) {
+            throw new Error('No active pipeline set');
+        }
+
+        return {
+            pipeline: this.currentPipeline.pipeline,
+            vertexBuffer: this.resources.vertexBuffer,
+            uniformBuffer: this.resources.uniformBuffer,
+            bindGroup: this.resources.bindGroup
+        };
+    }
+
+    /**
+     * Update time uniform
+     * @param {number} time - Current time in seconds
+     */
+    updateTime(time) {
+        if (this.resources.uniformBuffer) {
+            const timeData = new Float32Array([time, 0.0, 0.0, 0.0]);
+            this.device.queue.writeBuffer(this.resources.uniformBuffer, 0, timeData);
+        }
+    }
+
+    /**
+     * Clean up all resources
+     */
+    destroy() {
+        // Destroy buffers
+        if (this.resources.vertexBuffer) {
+            this.resources.vertexBuffer.destroy();
+        }
+        if (this.resources.uniformBuffer) {
+            this.resources.uniformBuffer.destroy();
+        }
+
+        // Clear caches
+        this.pipelines.clear();
+        this.currentPipeline = null;
+        this.resources = {
+            vertexBuffer: null,
+            uniformBuffer: null,
+            bindGroup: null
+        };
+    }
+}
+
+/** @type {ShaderManager} Global shader manager instance */
+let shaderManager = null;
+
