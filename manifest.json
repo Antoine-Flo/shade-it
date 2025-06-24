@@ -26,6 +26,7 @@
         "overlay/overlay.css"
       ],
       "js": [
+        "overlay/shaderManager.js",
         "overlay/shader.js"
       ]
     }
